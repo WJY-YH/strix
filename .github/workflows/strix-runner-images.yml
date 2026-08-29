@@ -1,0 +1,83 @@
+name: Strix runner images
+
+on:
+  push:
+    branches:
+      - codex/strix-runner-mvp
+  pull_request:
+    paths:
+      - "deploy/**"
+      - "tests/deploy/runner/**"
+      - "tests/test_cli_run_name.py"
+      - "strix/interface/cli_args.py"
+      - "strix/interface/scan_setup.py"
+      - ".github/workflows/strix-runner-images.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --dev --frozen
+      - run: uv run pytest tests/test_cli_run_name.py tests/deploy/runner -q
+      - run: >-
+          uv run ruff check deploy/runner tests/deploy/runner
+          strix/interface/cli_args.py strix/interface/scan_setup.py
+
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm --prefix deploy/ui test
+      - run: node --test deploy/test-target/server.test.mjs
+
+  image-builds:
+    needs: [python-tests, node-tests]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [ui, runner, test-target]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          push: false
+          tags: local/strix-${{ matrix.image }}:test
+
+  publish-images:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/codex/strix-runner-mvp'
+    needs: [python-tests, node-tests, image-builds]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [ui, runner, test-target]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/${{ matrix.image }}/Dockerfile
+          push: true
+          tags: ghcr.io/wjy-yh/strix-${{ matrix.image }}:${{ github.sha }}

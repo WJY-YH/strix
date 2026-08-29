@@ -1,0 +1,10 @@
+.git
+.github
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+**/__pycache__
+**/node_modules
+agent_runs
+strix_runs
