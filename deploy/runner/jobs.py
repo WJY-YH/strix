@@ -195,7 +195,10 @@ class ScanManager:
                     self.uploads.discard(target.value)
                     return failed
                 self._upload_ids[job.id] = target.value
-                target_value = str(source_dir)
+                docker_data_dir = self.config.docker_data_dir or self.config.data_dir
+                target_value = str(
+                    docker_data_dir / "strix_runs" / run_name / "uploaded-source"
+                )
 
             argv = [
                 self.config.strix_binary,
