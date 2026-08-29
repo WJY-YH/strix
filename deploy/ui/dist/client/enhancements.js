@@ -154,7 +154,8 @@ function installZipUpload() {
     </label>
     <small class="strix-zip-status">只上传源码压缩包，最大 100 MB。扫描结束后自动删除源码。</small>
   `;
-  targetInput.closest("label")?.after(panel);
+  const panelAnchor = targetInput.closest("label") || targetInput.parentElement;
+  panelAnchor?.after(panel);
   const fileInput = panel.querySelector('input[type="file"]');
   const status = panel.querySelector(".strix-zip-status");
   const state = { file: null, uploadId: null };
