@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from deploy.runner.auth import bearer_is_valid
+from deploy.runner.batches import BatchManager, BatchNotFound
 from deploy.runner.jobs import ScanBusy, ScanNotFound, StorageNotReady
 from deploy.runner.targets import TargetRejected, validate_redirect_chain, validate_target
 from deploy.runner.uploads import UploadRejected
@@ -17,6 +18,7 @@ from deploy.runner.uploads import UploadRejected
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from deploy.runner.batches import BatchJob
     from deploy.runner.config import RunnerConfig
     from deploy.runner.jobs import ScanJob, ScanManager
 
@@ -27,6 +29,8 @@ _SCAN_PATH = re.compile(r"/v1/scans/([^/]+)")
 _CANCEL_PATH = re.compile(r"/v1/scans/([^/]+)/cancel")
 _REPORT_PATH = re.compile(r"/v1/scans/([^/]+)/report")
 _REPORT_DOWNLOAD_PATH = re.compile(r"/v1/scans/([^/]+)/report/download")
+_BATCH_PATH = re.compile(r"/v1/batches/([^/]+)")
+_BATCH_CANCEL_PATH = re.compile(r"/v1/batches/([^/]+)/cancel")
 
 
 def _job_payload(job: ScanJob) -> dict[str, object]:
@@ -42,6 +46,36 @@ def _job_payload(job: ScanJob) -> dict[str, object]:
         "phaseIndex": job.phase_index,
         "phaseTotal": job.phase_total,
         "updatedAt": job.updated_at,
+    }
+
+
+def _batch_payload(batch: BatchJob) -> dict[str, object]:
+    return {
+        "id": batch.id,
+        "status": batch.status,
+        "createdAt": batch.created_at,
+        "updatedAt": batch.updated_at,
+        "total": batch.total,
+        "completed": batch.completed,
+        "quickScan": batch.quick_scan,
+        "items": [
+            {
+                "id": item.id,
+                "position": item.position,
+                "targetType": item.target_type,
+                "target": item.target,
+                "status": item.status,
+                "scanId": item.scan_id,
+                "startedAt": item.started_at,
+                "finishedAt": item.finished_at,
+                "message": item.message,
+                "phase": item.phase,
+                "phaseIndex": item.phase_index,
+                "phaseTotal": item.phase_total,
+                "updatedAt": item.updated_at,
+            }
+            for item in batch.items
+        ],
     }
 
 
@@ -64,7 +98,10 @@ def create_server(
     config: RunnerConfig,
     manager: ScanManager,
     preflight: Callable[[], dict[str, object]],
+    batch_manager: BatchManager | None = None,
 ) -> ThreadingHTTPServer:
+    batch_manager = batch_manager or BatchManager(manager, config)
+
     class RunnerHandler(BaseHTTPRequestHandler):
         server_version = "StrixRunner"
 
@@ -127,7 +164,7 @@ def create_server(
                 return None
             return payload
 
-        def do_GET(self) -> None:  # noqa: PLR0911
+        def do_GET(self) -> None:  # noqa: PLR0911, PLR0912, PLR0915
             path = urlsplit(self.path).path
             if path == "/health":
                 self._send(200, {"status": "ok"})
@@ -139,6 +176,30 @@ def create_server(
                 return
             if path == "/v1/scans":
                 self._send(200, {"scans": [_job_payload(job) for job in manager.list()]})
+                return
+            if path == "/v1/batches":
+                self._send(
+                    200,
+                    {"batches": [_batch_payload(batch) for batch in batch_manager.list()]},
+                )
+                return
+            batch_cancel_match = _BATCH_CANCEL_PATH.fullmatch(path)
+            if batch_cancel_match:
+                try:
+                    batch = batch_manager.get(batch_cancel_match.group(1))
+                except BatchNotFound:
+                    self._send(404, {"error": "not_found", "message": "未找到该批次。"})
+                    return
+                self._send(200, _batch_payload(batch))
+                return
+            batch_match = _BATCH_PATH.fullmatch(path)
+            if batch_match:
+                try:
+                    batch = batch_manager.get(batch_match.group(1))
+                except BatchNotFound:
+                    self._send(404, {"error": "not_found", "message": "未找到该批次。"})
+                    return
+                self._send(200, _batch_payload(batch))
                 return
             download_match = _REPORT_DOWNLOAD_PATH.fullmatch(path)
             if download_match:
@@ -180,7 +241,7 @@ def create_server(
                 return
             self._send(404, {"error": "not_found", "message": "接口不存在。"})
 
-        def do_POST(self) -> None:
+        def do_POST(self) -> None:  # noqa: PLR0911
             path = urlsplit(self.path).path
             if not self._authorized():
                 return
@@ -189,6 +250,18 @@ def create_server(
                 return
             if path == "/v1/scans":
                 self._create_scan()
+                return
+            if path == "/v1/batches":
+                self._create_batch()
+                return
+            batch_cancel_match = _BATCH_CANCEL_PATH.fullmatch(path)
+            if batch_cancel_match:
+                try:
+                    batch = batch_manager.cancel(batch_cancel_match.group(1))
+                except BatchNotFound:
+                    self._send(404, {"error": "not_found", "message": "未找到该批次。"})
+                    return
+                self._send(200, _batch_payload(batch))
                 return
             cancel_match = _CANCEL_PATH.fullmatch(path)
             if cancel_match:
@@ -263,5 +336,52 @@ def create_server(
                 self._send(503, {"error": "not_ready", "message": "执行器尚未准备完成。"})
                 return
             self._send(202, {"id": job.id})
+
+        def _create_batch(self) -> None:
+            payload = self._read_json()
+            if payload is None:
+                return
+            expected_keys = {"items", "quickScan", "authorized"}
+            items_payload = payload.get("items")
+            if (
+                set(payload) != expected_keys
+                or not isinstance(items_payload, list)
+                or not isinstance(payload.get("quickScan"), bool)
+            ):
+                self._send(400, {"error": "invalid_request", "message": "批量扫描请求无效。"})
+                return
+            if payload.get("authorized") is not True:
+                self._send(
+                    403,
+                    {"error": "authorization_required", "message": "必须确认已获测试授权。"},
+                )
+                return
+            targets = []
+            for item_payload in items_payload:
+                if (
+                    not isinstance(item_payload, dict)
+                    or set(item_payload) != {"type", "target"}
+                ):
+                    self._send(400, {"error": "invalid_request", "message": "批量项目无效。"})
+                    return
+            try:
+                for item_payload in items_payload:
+                    target = validate_target(
+                        str(item_payload["type"]),
+                        item_payload["target"],
+                        config.allowed_targets,
+                    )
+                    if target.kind == "website":
+                        validate_redirect_chain(target, config.allowed_targets)
+                    targets.append(target)
+            except TargetRejected:
+                self._send(403, {"error": "target_rejected", "message": "目标不在授权范围内。"})
+                return
+            try:
+                batch = batch_manager.create(targets, quick_scan=payload["quickScan"])
+            except ValueError as exc:
+                self._send(400, {"error": "invalid_request", "message": str(exc)})
+                return
+            self._send(202, _batch_payload(batch))
 
     return ThreadingHTTPServer((config.bind_host, config.port), RunnerHandler)

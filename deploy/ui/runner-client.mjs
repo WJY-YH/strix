@@ -130,6 +130,7 @@ export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
   }
 
   const scanPath = (id) => `/v1/scans/${encodeURIComponent(id)}`;
+  const batchPath = (id) => `/v1/batches/${encodeURIComponent(id)}`;
   return {
     ready: () => request("/ready"),
     uploadZip,
@@ -139,5 +140,9 @@ export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
     stop: (id) => request(`${scanPath(id)}/cancel`, { method: "POST" }),
     report: (id) => request(`${scanPath(id)}/report`),
     downloadReport: (id) => requestBinary(`${scanPath(id)}/report/download`),
+    createBatch: (body) => request("/v1/batches", { method: "POST", body }),
+    listBatches: () => request("/v1/batches"),
+    batchStatus: (id) => request(batchPath(id)),
+    cancelBatch: (id) => request(`${batchPath(id)}/cancel`, { method: "POST" }),
   };
 }

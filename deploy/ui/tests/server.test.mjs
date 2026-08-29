@@ -33,6 +33,10 @@ async function withServer(callback) {
         contentDisposition: 'attachment; filename="strix-report-scan-id.md"',
       }
     ),
+    createBatch: async (body) => (calls.push(["createBatch", body]), { id: "batch-id" }),
+    listBatches: async () => (calls.push(["listBatches"]), { batches: [] }),
+    batchStatus: async (id) => (calls.push(["batchStatus", id]), { id, status: "running" }),
+    cancelBatch: async (id) => (calls.push(["cancelBatch", id]), { id, status: "cancelled" }),
   };
   const server = createUiServer({
     accessToken: "ui-access-token",
@@ -90,7 +94,25 @@ test("UI proxies the existing scan contract", async () => {
     assert.equal(await download.text(), "# 报告\n");
     assert.equal(download.headers.get("content-type"), "text/markdown; charset=utf-8");
     assert.match(download.headers.get("content-disposition"), /strix-report-scan-id\.md/);
-    assert.deepEqual(calls.map(([name]) => name), ["list", "start", "status", "stop", "report", "downloadReport"]);
+    assert.equal((await request("/api/batches")).status, 200);
+    assert.equal((await request("/api/batches", {
+      method: "POST",
+      body: JSON.stringify({ items: [], quickScan: true, authorized: true }),
+    })).status, 202);
+    assert.equal((await request("/api/batches/batch-id")).status, 200);
+    assert.equal((await request("/api/batches/batch-id/cancel", { method: "POST" })).status, 200);
+    assert.deepEqual(calls.map(([name]) => name), [
+      "list",
+      "start",
+      "status",
+      "stop",
+      "report",
+      "downloadReport",
+      "listBatches",
+      "createBatch",
+      "batchStatus",
+      "cancelBatch",
+    ]);
   });
 });
 

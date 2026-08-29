@@ -46,6 +46,42 @@ export function rewriteZipScanBody(body, uploadId) {
 }
 
 
+export function normalizeBatchItems(rows, uploadIdForFile = (file) => file.uploadId) {
+  const items = [];
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const type = String(row?.type || "");
+    if (type === "local_code") {
+      for (const file of Array.isArray(row.files) ? row.files : []) {
+        const uploadId = uploadIdForFile(file);
+        if (uploadId) items.push({ type, target: String(uploadId) });
+      }
+      continue;
+    }
+    const target = String(row?.target || "").trim();
+    if ((type === "website" || type === "repository") && target) {
+      items.push({ type, target });
+    }
+  }
+  return items;
+}
+
+
+export function formatBatchProgress(batch) {
+  const total = Math.max(0, Number(batch?.total) || 0);
+  const completed = Math.min(total, Math.max(0, Number(batch?.completed) || 0));
+  const current = Array.isArray(batch?.items)
+    ? batch.items.find((item) => item?.status === "running")
+    : null;
+  const totalPhases = Number(current?.phaseTotal) > 0 ? Number(current.phaseTotal) : 4;
+  const phaseIndex = Math.min(totalPhases, Math.max(1, Number(current?.phaseIndex) || 1));
+  return {
+    count: `${completed}/${total}`,
+    current: String(current?.message || (batch?.status === "queued" ? "等待开始" : "批次处理完成")),
+    phase: current ? `${phaseIndex}/${totalPhases}` : "-/-",
+  };
+}
+
+
 function statusLabel(scan) {
   if (scan.status === "findings") return "发现问题";
   if (scan.status === "complete") return "已完成";
@@ -164,6 +200,8 @@ function installZipUpload() {
     window.__strixZipMode = enabled;
     zipButton.setAttribute("aria-pressed", String(enabled));
     panel.hidden = !enabled;
+    const targetLabel = targetInput.closest("label");
+    if (targetLabel) targetLabel.hidden = enabled;
     if (enabled) {
       targetInput.value = "https://github.com/WJY-YH/strix";
       targetInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -219,6 +257,154 @@ function installZipUpload() {
 }
 
 
+function installBatchScan() {
+  if (window.__strixBatchInstalled) return;
+  const targetGroup = document.querySelector('[role="group"]');
+  if (!targetGroup) return;
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "strix-batch-button";
+  button.textContent = "批量检查";
+  targetGroup.append(button);
+
+  const panel = document.createElement("section");
+  panel.className = "strix-batch-panel";
+  panel.hidden = true;
+  panel.innerHTML = `
+    <div class="strix-batch-heading"><strong>批量检查</strong><small>网站、GitHub 和 ZIP 会按顺序扫描</small></div>
+    <div class="strix-batch-rows"></div>
+    <div class="strix-batch-actions">
+      <button type="button" class="strix-batch-add">添加目标</button>
+      <button type="button" class="strix-batch-start">开始批量检查</button>
+      <button type="button" class="strix-batch-cancel" hidden>停止批次</button>
+    </div>
+    <div class="strix-batch-status" role="status"></div>
+  `;
+  targetGroup.parentElement?.append(panel);
+  const rowsContainer = panel.querySelector(".strix-batch-rows");
+  const status = panel.querySelector(".strix-batch-status");
+  const addButton = panel.querySelector(".strix-batch-add");
+  const startButton = panel.querySelector(".strix-batch-start");
+  const cancelButton = panel.querySelector(".strix-batch-cancel");
+  let batchId = null;
+  let timer = null;
+
+  const addRow = (type = "website") => {
+    const row = document.createElement("div");
+    row.className = "strix-batch-row";
+    row.innerHTML = `
+      <select aria-label="批量目标类型">
+        <option value="website">网站</option>
+        <option value="repository">GitHub 仓库</option>
+        <option value="local_code">ZIP 文件</option>
+      </select>
+      <input aria-label="批量目标地址" placeholder="https://example.com">
+      <input aria-label="批量 ZIP 文件" type="file" accept=".zip,application/zip" multiple hidden>
+      <button type="button" class="strix-batch-remove">删除</button>
+    `;
+    const select = row.querySelector("select");
+    const textInput = row.querySelector('input[type="text"], input:not([type])');
+    const fileInput = row.querySelector('input[type="file"]');
+    const updateType = () => {
+      const zip = select.value === "local_code";
+      textInput.hidden = zip;
+      fileInput.hidden = !zip;
+      textInput.required = !zip;
+    };
+    select.value = type;
+    select.addEventListener("change", updateType);
+    row.querySelector(".strix-batch-remove").addEventListener("click", () => row.remove());
+    updateType();
+    rowsContainer.append(row);
+  };
+
+  const readRows = () => Array.from(rowsContainer.querySelectorAll(".strix-batch-row")).map((row) => ({
+    type: row.querySelector("select").value,
+    target: row.querySelector('input[type="text"], input:not([type])').value,
+    files: Array.from(row.querySelector('input[type="file"]').files || []),
+  }));
+
+  const upload = async (file) => {
+    const response = await fetch("/api/uploads", {
+      method: "POST",
+      headers: { "Content-Type": "application/zip", "X-Filename": file.name },
+      body: file,
+    });
+    if (!response.ok) throw new Error("ZIP 上传失败");
+    return (await response.json()).uploadId;
+  };
+
+  const render = (batch) => {
+    const progress = formatBatchProgress(batch);
+    status.textContent = `总进度 ${progress.count} · 当前：${progress.current} · 阶段 ${progress.phase}`;
+    const links = batch.items
+      .filter((item) => item.scanId && ["complete", "findings"].includes(item.status))
+      .map((item) => `<a href="/api/scans/${encodeURIComponent(item.scanId)}/report/download" download>下载第 ${item.position} 项 Markdown</a>`)
+      .join(" · ");
+    if (links) status.insertAdjacentHTML("beforeend", ` · ${links}`);
+    if (["complete", "findings", "failed", "cancelled"].includes(batch.status)) {
+      startButton.disabled = false;
+      cancelButton.hidden = true;
+      if (timer) window.clearInterval(timer);
+      timer = null;
+    }
+  };
+
+  const refresh = async () => {
+    if (!batchId) return;
+    const response = await fetch(`/api/batches/${encodeURIComponent(batchId)}`, { cache: "no-store" });
+    if (response.ok) render(await response.json());
+  };
+
+  addButton.addEventListener("click", () => addRow());
+  startButton.addEventListener("click", async () => {
+    const authorized = document.querySelector('input[type="checkbox"]')?.checked === true;
+    if (!authorized) {
+      status.textContent = "请先确认已获得安全测试授权。";
+      return;
+    }
+    try {
+      const rows = readRows();
+      for (const row of rows) {
+        if (row.type === "local_code") {
+          const uploaded = [];
+          for (const file of row.files) uploaded.push({ ...file, uploadId: await upload(file) });
+          row.files = uploaded;
+        }
+      }
+      const items = normalizeBatchItems(rows);
+      if (!items.length) {
+        status.textContent = "请至少添加一个有效目标。";
+        return;
+      }
+      const response = await fetch("/api/batches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items, quickScan: true, authorized: true }),
+      });
+      if (!response.ok) throw new Error("批次创建失败");
+      const batch = await response.json();
+      batchId = batch.id;
+      startButton.disabled = true;
+      cancelButton.hidden = false;
+      render(batch);
+      timer = window.setInterval(refresh, 1500);
+    } catch {
+      status.textContent = "批量检查创建失败，请检查目标和 ZIP 文件。";
+    }
+  });
+  cancelButton.addEventListener("click", async () => {
+    if (!batchId) return;
+    await fetch(`/api/batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST" });
+    await refresh();
+  });
+
+  addRow();
+  window.__strixBatchInstalled = true;
+}
+
+
 if (typeof document !== "undefined") {
   const zipStyle = document.createElement("style");
   zipStyle.textContent = `
@@ -228,9 +414,24 @@ if (typeof document !== "undefined") {
     .strix-zip-picker { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #1e3a8a; font-weight: 600; cursor: pointer; }
     .strix-zip-picker input { max-width: 180px; }
     .strix-zip-status { display: block; margin-top: 8px; color: #64748b; }
+    .strix-batch-button { margin-left: 10px; border: 1px solid #2563eb; border-radius: 14px; padding: 12px 18px; background: #eff6ff; color: #1d4ed8; cursor: pointer; font-weight: 600; }
+    .strix-batch-panel { margin-top: 16px; border: 1px solid #bfdbfe; border-radius: 16px; padding: 16px; background: #f8fbff; }
+    .strix-batch-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; color: #1e3a8a; }
+    .strix-batch-heading small { color: #64748b; font-weight: 400; }
+    .strix-batch-row { display: grid; grid-template-columns: 140px 1fr auto; gap: 8px; margin-top: 10px; align-items: center; }
+    .strix-batch-row select, .strix-batch-row input { min-width: 0; border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 10px; background: #fff; color: #172554; }
+    .strix-batch-row input[type="file"] { padding: 7px; }
+    .strix-batch-remove, .strix-batch-add, .strix-batch-cancel { border: 1px solid #cbd5e1; border-radius: 10px; padding: 9px 12px; background: #fff; color: #475569; cursor: pointer; }
+    .strix-batch-actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+    .strix-batch-start { border: 0; border-radius: 10px; padding: 9px 14px; background: #2563eb; color: #fff; cursor: pointer; font-weight: 600; }
+    .strix-batch-start:disabled { opacity: .55; cursor: wait; }
+    .strix-batch-status { margin-top: 12px; color: #475569; line-height: 1.6; }
+    .strix-batch-status a { color: #1d4ed8; }
+    @media (max-width: 680px) { .strix-batch-row { grid-template-columns: 1fr; } .strix-batch-button { margin: 10px 0 0; } }
   `;
   document.head.append(zipStyle);
   window.setInterval(installZipUpload, 300);
+  window.setInterval(installBatchScan, 300);
   document.addEventListener("click", async (event) => {
     const button = event.target.closest?.(".download-button");
     const reportId = window.__strixReportId;

@@ -330,6 +330,50 @@ def test_list_scans_returns_newest_first_with_phase_fields(api_parts) -> None:
     assert {"phase", "phaseIndex", "phaseTotal", "updatedAt"}.issubset(payload["scans"][0])
 
 
+def test_batch_api_creates_lists_and_cancels_mixed_targets(api_parts) -> None:
+    config, manager = api_parts
+    config = replace(
+        config,
+        allowed_targets=frozenset({"host.docker.internal:3001", "github.com/acme/repo"}),
+    )
+    with running_api(config, manager) as base_url:
+        status, created = request_json(
+            base_url,
+            "/v1/batches",
+            method="POST",
+            token="runner-token",
+            body={
+                "items": [
+                    {"type": "website", "target": "http://host.docker.internal:3001"},
+                    {"type": "repository", "target": "https://github.com/acme/repo"},
+                ],
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        assert status == 202
+        batch_id = str(created["id"])
+        listed_status, listed = request_json(base_url, "/v1/batches", token="runner-token")
+        detail_status, detail = request_json(
+            base_url,
+            f"/v1/batches/{batch_id}",
+            token="runner-token",
+        )
+        cancel_status, cancelled = request_json(
+            base_url,
+            f"/v1/batches/{batch_id}/cancel",
+            method="POST",
+            token="runner-token",
+        )
+
+    assert listed_status == 200
+    assert listed["batches"][0]["id"] == batch_id
+    assert detail_status == 200
+    assert [item["targetType"] for item in detail["items"]] == ["website", "repository"]
+    assert cancel_status == 200
+    assert cancelled["status"] in {"cancelled", "running"}
+
+
 @pytest.mark.parametrize(
     ("body", "expected_status"),
     [
