@@ -92,6 +92,19 @@ def test_start_uses_fixed_arguments(tmp_path: Path) -> None:
     assert job.run_name == f"scan_{job.id.replace('-', '')}"
 
 
+def test_start_exposes_truthful_phase_fields(tmp_path: Path) -> None:
+    manager = make_manager(tmp_path, RecordingProcessFactory(blocked=True))
+
+    job = manager.start(fixture_target())
+
+    assert job.phase == "scanning"
+    assert job.phase_index == 2
+    assert job.phase_total == 4
+    assert job.message == "正在执行安全检查"
+    assert job.updated_at >= job.started_at
+    manager.stop(job.id)
+
+
 def test_second_running_scan_is_rejected(tmp_path: Path) -> None:
     manager = make_manager(tmp_path, RecordingProcessFactory(blocked=True))
     first = manager.start(fixture_target())

@@ -33,7 +33,11 @@ def _job_payload(job: ScanJob) -> dict[str, object]:
         "startedAt": job.started_at,
         "finishedAt": job.finished_at,
         "exitCode": job.exit_code,
-        "message": job.error,
+        "message": job.error or job.message,
+        "phase": job.phase,
+        "phaseIndex": job.phase_index,
+        "phaseTotal": job.phase_total,
+        "updatedAt": job.updated_at,
     }
 
 
@@ -95,6 +99,9 @@ def create_server(
                 return
             if path == "/ready":
                 self._send(200, preflight())
+                return
+            if path == "/v1/scans":
+                self._send(200, {"scans": [_job_payload(job) for job in manager.list()]})
                 return
             scan_match = _SCAN_PATH.fullmatch(path)
             if scan_match:

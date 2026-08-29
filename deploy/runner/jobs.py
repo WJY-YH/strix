@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 MIN_FREE_GB = 10
 TERMINAL_STATUSES = frozenset({"complete", "findings", "failed", "stopped"})
+PHASE_TOTAL = 4
 
 
 class ScanBusy(RuntimeError):  # noqa: N818
@@ -51,6 +52,11 @@ class ScanJob:
     finished_at: str | None = None
     exit_code: int | None = None
     error: str | None = None
+    phase: str = "preparing"
+    phase_index: int = 1
+    phase_total: int = PHASE_TOTAL
+    message: str = "正在准备扫描"
+    updated_at: str = ""
 
 
 class ManagedProcess(Protocol):
@@ -151,6 +157,11 @@ class ScanManager:
                 target=target.value,
                 status="running",
                 started_at=_now(),
+                phase="preparing",
+                phase_index=1,
+                phase_total=PHASE_TOTAL,
+                message="正在准备扫描",
+                updated_at=_now(),
             )
             self._jobs[job.id] = job
             self._active_id = job.id
@@ -190,8 +201,26 @@ class ScanManager:
                 self._persist(failed)
                 return failed
             self._processes[job.id] = process
+            job = replace(
+                job,
+                phase="scanning",
+                phase_index=2,
+                message="正在执行安全检查",
+                updated_at=_now(),
+            )
+            self._jobs[job.id] = job
+            self._persist(job)
             threading.Thread(target=self._watch, args=(job.id,), daemon=True).start()
             return job
+
+    def list(self, limit: int = 100) -> list[ScanJob]:
+        with self._lock:
+            bounded_limit = max(1, min(limit, 100))
+            return sorted(
+                self._jobs.values(),
+                key=lambda job: job.started_at,
+                reverse=True,
+            )[:bounded_limit]
 
     def get(self, job_id: str) -> ScanJob:
         with self._lock:
@@ -248,9 +277,19 @@ class ScanManager:
             finished = replace(
                 job,
                 status=status,
+                phase=status,
+                phase_index=PHASE_TOTAL,
+                message=(
+                    "扫描完成"
+                    if status == "complete"
+                    else "发现需要处理的问题"
+                    if status == "findings"
+                    else "扫描未完成"
+                ),
                 finished_at=_now(),
                 exit_code=exit_code,
                 error=error,
+                updated_at=_now(),
             )
             self._jobs[job_id] = finished
             self._active_id = None
@@ -264,9 +303,13 @@ class ScanManager:
         stopped = replace(
             job,
             status="stopped",
+            phase="stopped",
+            phase_index=PHASE_TOTAL,
+            message="体检已停止",
             finished_at=_now(),
             exit_code=exit_code,
             error=None,
+            updated_at=_now(),
         )
         self._jobs[job_id] = stopped
         self._active_id = None
@@ -296,6 +339,11 @@ class ScanManager:
         for path in sorted(self.state_dir.glob("*.json")):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
+                payload.setdefault("phase", payload.get("status", "preparing"))
+                payload.setdefault("phase_index", PHASE_TOTAL if payload.get("status") in TERMINAL_STATUSES else 1)
+                payload.setdefault("phase_total", PHASE_TOTAL)
+                payload.setdefault("message", "扫描状态已恢复")
+                payload.setdefault("updated_at", payload.get("finished_at") or payload.get("started_at") or _now())
                 job = ScanJob(**payload)
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 continue
@@ -303,8 +351,12 @@ class ScanManager:
                 job = replace(
                     job,
                     status="failed",
+                    phase="failed",
+                    phase_index=PHASE_TOTAL,
+                    message="Runner 重启，扫描未完成",
                     finished_at=_now(),
                     error="Runner restarted before the scan finished.",
+                    updated_at=_now(),
                 )
                 self._persist(job)
             self._jobs[job.id] = job

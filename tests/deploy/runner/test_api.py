@@ -125,6 +125,10 @@ def test_create_get_cancel_and_report(api_parts) -> None:
             "finishedAt",
             "exitCode",
             "message",
+            "phase",
+            "phaseIndex",
+            "phaseTotal",
+            "updatedAt",
         }
 
         stop_status, stopped = request_json(
@@ -144,6 +148,43 @@ def test_create_get_cancel_and_report(api_parts) -> None:
         )
         assert report_status == 200
         assert set(report) == {"summary", "markdown", "findings"}
+
+
+def test_list_scans_returns_newest_first_with_phase_fields(api_parts) -> None:
+    config, manager = api_parts
+    with running_api(config, manager) as base_url:
+        first = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "website",
+                "target": "http://host.docker.internal:3001",
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        manager.stop(str(first[1]["id"]))
+        second = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "website",
+                "target": "http://host.docker.internal:3001",
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        manager.stop(str(second[1]["id"]))
+
+        status, payload = request_json(base_url, "/v1/scans", token="runner-token")
+
+    assert status == 200
+    assert [item["id"] for item in payload["scans"][:2]] == [second[1]["id"], first[1]["id"]]
+    assert {"phase", "phaseIndex", "phaseTotal", "updatedAt"}.issubset(payload["scans"][0])
 
 
 @pytest.mark.parametrize(
