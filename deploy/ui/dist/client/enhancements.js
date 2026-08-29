@@ -46,6 +46,11 @@ export function rewriteZipScanBody(body, uploadId) {
 }
 
 
+export function zipCanStart(mode, hasFile, authorized) {
+  return mode === true && hasFile === true && authorized === true;
+}
+
+
 export function normalizeBatchItems(rows, uploadIdForFile = (file) => file.uploadId) {
   const items = [];
   for (const row of Array.isArray(rows) ? rows : []) {
@@ -195,6 +200,14 @@ function installZipUpload() {
   const fileInput = panel.querySelector('input[type="file"]');
   const status = panel.querySelector(".strix-zip-status");
   const state = { file: null, uploadId: null };
+  const syncStartButton = () => {
+    const startButton = document.querySelector(".primary-button");
+    const authorization = document.querySelector('.authorization-row input[type="checkbox"]');
+    if (!startButton || !authorization) return;
+    if (zipCanStart(window.__strixZipMode, Boolean(state.file), authorization.checked)) {
+      startButton.disabled = false;
+    }
+  };
 
   const setMode = (enabled) => {
     window.__strixZipMode = enabled;
@@ -218,10 +231,14 @@ function installZipUpload() {
     state.uploadId = null;
     if (!state.file) {
       status.textContent = "只上传源码压缩包，最大 100 MB。扫描结束后自动删除源码。";
+      syncStartButton();
       return;
     }
+    setMode(true);
     status.textContent = `${state.file.name}（${Math.ceil(state.file.size / 1024 / 1024)} MB），开始体检时上传。`;
+    syncStartButton();
   });
+  window.setInterval(syncStartButton, 200);
 
   const originalFetch = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {

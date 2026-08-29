@@ -8,6 +8,7 @@ import {
   normalizeBatchItems,
   rewriteZipScanBody,
   safeReportFilename,
+  zipCanStart,
 } from "../dist/client/enhancements.js";
 
 
@@ -42,6 +43,14 @@ test("ZIP scan requests become local-code scans without changing authorization",
     quickScan: false,
     authorized: true,
   });
+});
+
+
+test("ZIP-only scans can start without a website address", () => {
+  assert.equal(zipCanStart(true, true, true), true);
+  assert.equal(zipCanStart(true, false, true), false);
+  assert.equal(zipCanStart(true, true, false), false);
+  assert.equal(zipCanStart(false, true, true), false);
 });
 
 
@@ -86,4 +95,5 @@ test("static page loads the history enhancement after the app bundle", async () 
 test("ZIP upload enhancement supports inputs that are not inside labels", async () => {
   const source = await readFile(new URL("../dist/client/enhancements.js", import.meta.url), "utf8");
   assert.match(source, /targetInput\.parentElement/);
+  assert.match(source, /syncStartButton/);
 });
