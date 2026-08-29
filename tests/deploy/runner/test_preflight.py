@@ -1,31 +1,16 @@
 from __future__ import annotations
 
 import shutil
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from deploy.runner.config import RunnerConfig
 from deploy.runner.preflight import ProbeResult, collect_preflight
+from tests.deploy.runner.helpers import make_config
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
-
-
-def make_config(tmp_path: Path) -> RunnerConfig:
-    return RunnerConfig(
-        token="runner-token",  # noqa: S106
-        bind_host="127.0.0.1",
-        port=8787,
-        data_dir=tmp_path,
-        strix_binary="strix",
-        sandbox_image="ghcr.io/usestrix/strix-sandbox:1.3.0",
-        model_label="deepseek/deepseek-v4-pro",
-        max_budget_usd=Decimal("5"),
-        allowed_targets=frozenset({"host.docker.internal:3001"}),
-    )
 
 
 def _twenty_gb_free(_path: Path) -> shutil._ntuple_diskusage:
