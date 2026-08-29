@@ -10,6 +10,7 @@ import { RunnerClientError, createRunnerClient } from "./runner-client.mjs";
 
 const COOKIE_NAME = "strix_ui_session";
 const MAX_BODY_BYTES = 32 * 1024;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 const MIME_TYPES = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
@@ -127,7 +128,9 @@ async function serveStatic(response, clientDir, pathname) {
     candidate = resolve(root, "index.html");
   }
   response.writeHead(200, {
-    "Cache-Control": candidate.endsWith("index.html") ? "no-cache" : "public, max-age=31536000, immutable",
+    "Cache-Control": candidate.endsWith("index.html") || candidate.endsWith("enhancements.js")
+      ? "no-cache"
+      : "public, max-age=31536000, immutable",
     "Content-Type": MIME_TYPES.get(extname(candidate)) || "application/octet-stream",
     "X-Content-Type-Options": "nosniff",
   });
@@ -165,6 +168,23 @@ export function createUiServer({ accessToken, runnerClient, clientDir }) {
         return;
       }
       try {
+        if (pathname === "/api/uploads" && request.method === "POST") {
+          const contentLength = Number(request.headers["content-length"] || 0);
+          if (!Number.isSafeInteger(contentLength) || contentLength <= 0 || contentLength > MAX_UPLOAD_BYTES) {
+            request.resume();
+            sendJson(response, 413, { error: "request_too_large", message: "ZIP 文件过大。" });
+            return;
+          }
+          sendJson(
+            response,
+            201,
+            await runnerClient.uploadZip(request, {
+              filename: String(request.headers["x-filename"] || "upload.zip"),
+              contentLength,
+            }),
+          );
+          return;
+        }
         if (pathname === "/api/preflight" && request.method === "GET") {
           sendJson(response, 200, await runnerClient.ready());
           return;

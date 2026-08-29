@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { formatScanProgress, safeReportFilename } from "../dist/client/enhancements.js";
+import { formatScanProgress, rewriteZipScanBody, safeReportFilename } from "../dist/client/enhancements.js";
 
 
 test("progress formatter uses server phase and truthful elapsed data", () => {
@@ -29,7 +29,17 @@ test("report filenames cannot contain path separators", () => {
 });
 
 
+test("ZIP scan requests become local-code scans without changing authorization", () => {
+  assert.deepEqual(JSON.parse(rewriteZipScanBody({ quickScan: false, authorized: true }, "upload-id")), {
+    type: "local_code",
+    target: "upload-id",
+    quickScan: false,
+    authorized: true,
+  });
+});
+
+
 test("static page loads the history enhancement after the app bundle", async () => {
   const html = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
-  assert.match(html, /src="\/enhancements\.js"/);
+  assert.match(html, /src="\/enhancements\.js\?v=zip-upload-1"/);
 });

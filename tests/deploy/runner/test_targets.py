@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 from deploy.runner.targets import TargetRejected, validate_redirect_chain, validate_target
@@ -31,6 +33,15 @@ def test_rejects_unlisted_or_sensitive_website_targets(raw: str) -> None:
 def test_accepts_only_public_github_https_repository() -> None:
     target = validate_target("repository", "https://github.com/WJY-YH/strix", ALLOWED)
     assert target.value == "https://github.com/WJY-YH/strix"
+
+
+def test_accepts_local_code_upload_id() -> None:
+    upload_id = str(uuid.uuid4())
+
+    target = validate_target("local_code", upload_id, ALLOWED)
+
+    assert target.kind == "local_code"
+    assert target.value == upload_id
 
 
 def test_rejects_repository_query_string() -> None:

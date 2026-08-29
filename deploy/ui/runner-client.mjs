@@ -93,9 +93,46 @@ export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
     };
   }
 
+  async function uploadZip(body, { filename, contentLength }) {
+    let response;
+    try {
+      response = await fetchImpl(`${root}/v1/uploads`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/zip",
+          "Content-Length": String(contentLength),
+          "X-Filename": filename,
+        },
+        body,
+        duplex: "half",
+        signal: AbortSignal.timeout(120000),
+      });
+    } catch {
+      throw new RunnerClientError(503, "runner_unavailable", "执行器暂不可用，请稍后重试。");
+    }
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new RunnerClientError(response.ok ? 503 : response.status, "runner_error", "执行器返回了无效响应。");
+    }
+    if (!response.ok) {
+      const safePayload = payload && typeof payload === "object" ? payload : null;
+      throw new RunnerClientError(
+        response.status,
+        String(safePayload?.error || "runner_error"),
+        String(safePayload?.message || "上传失败。"),
+        safePayload,
+      );
+    }
+    return payload;
+  }
+
   const scanPath = (id) => `/v1/scans/${encodeURIComponent(id)}`;
   return {
     ready: () => request("/ready"),
+    uploadZip,
     start: (body) => request("/v1/scans", { method: "POST", body }),
     list: () => request("/v1/scans"),
     status: (id) => request(scanPath(id)),
