@@ -21,4 +21,5 @@ def make_config(tmp_path: Path) -> RunnerConfig:
         model_label="deepseek/deepseek-v4-pro",
         max_budget_usd=Decimal("5"),
         allowed_targets=frozenset({"host.docker.internal:3001"}),
+        retention_days=7,
     )
