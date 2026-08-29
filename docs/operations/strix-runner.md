@@ -32,6 +32,7 @@ sudoedit /etc/strix/runner.env
 - `STRIX_RUNNER_TOKEN`：新生成的长随机值。
 - `LLM_API_KEY`：模型服务密钥。
 - `STRIX_LLM`：实际使用的模型名。
+- `STRIX_REPORT_RETENTION_DAYS=7`：报告保留 7 天，过期的已结束扫描会自动清理；运行中的扫描不会清理。
 
 文件中不能保留 `change-before-start`。不要把密钥贴到工单、日志或命令历史。
 
@@ -105,3 +106,9 @@ curl --fail --silent \
 重启后必须返回相同终态和报告摘要。另需确认：外网无法连接 8787；未登录网页无法创建扫描或读取报告；报告中没有密钥和原始执行日志。
 
 最终证据需记录完整提交 SHA、三个镜像摘要、CI 链接、Zeabur 部署 ID、私有靶场扫描 ID 与终态、重启结果和外网 8787 拒绝结果，并明确写明“没有扫描真实业务或第三方目标”。
+
+## 8. 历史报告和临时开放网页
+
+Runner 会把扫描状态、阶段和报告写入持久数据目录。网页通过 `GET /api/scans` 显示最近记录；已完成记录可通过 `GET /api/scans/{id}/report/download` 下载 Markdown。Runner 重启后记录仍可读取，报告不依赖浏览器缓存。
+
+不需要查看时，在 Zeabur 的 UI 服务中移除 `strix-security-wjy.zeabur.app` 公网域名即可；不要删除 UI、Runner、测试靶场或持久数据。后台扫描继续运行。需要查看时，再把同一个域名临时绑定回 UI 服务，确认登录口令仍由服务端变量提供。
