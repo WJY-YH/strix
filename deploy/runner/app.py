@@ -186,7 +186,10 @@ def create_server(
             if payload is None:
                 return
             expected_keys = {"type", "target", "quickScan", "authorized"}
-            if set(payload) != expected_keys or payload.get("quickScan") is not True:
+            if (
+                set(payload) != expected_keys
+                or not isinstance(payload.get("quickScan"), bool)
+            ):
                 self._send(400, {"error": "invalid_request", "message": "扫描请求无效。"})
                 return
             if payload.get("authorized") is not True:
@@ -210,7 +213,7 @@ def create_server(
                 self._send(503, {"error": "not_ready", "message": "执行器尚未准备完成。"})
                 return
             try:
-                job = manager.start(target)
+                job = manager.start(target, quick_scan=payload["quickScan"])
             except ScanBusy:
                 self._send(409, {"error": "busy", "message": "已有扫描正在运行。"})
                 return

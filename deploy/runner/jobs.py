@@ -143,7 +143,7 @@ class ScanManager:
         self._load_jobs()
         self.cleanup_expired()
 
-    def start(self, target: AuthorizedTarget) -> ScanJob:
+    def start(self, target: AuthorizedTarget, *, quick_scan: bool = True) -> ScanJob:
         self._ensure_storage_ready()
         with self._lock:
             if self._active_id is not None:
@@ -174,13 +174,13 @@ class ScanManager:
                 "--non-interactive",
                 "--target",
                 target.value,
-                "--scan-mode",
-                "quick",
                 "--max-budget",
                 format(self.config.max_budget_usd, "f"),
                 "--run-name",
                 run_name,
             ]
+            if quick_scan:
+                argv[4:4] = ["--scan-mode", "quick"]
             env = os.environ.copy()
             env.pop("STRIX_RUNNER_TOKEN", None)
             env.pop("STRIX_UI_ACCESS_TOKEN", None)

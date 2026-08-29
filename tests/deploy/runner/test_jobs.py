@@ -93,6 +93,16 @@ def test_start_uses_fixed_arguments(tmp_path: Path) -> None:
     assert job.run_name == f"scan_{job.id.replace('-', '')}"
 
 
+def test_start_without_quick_scan_uses_strix_default_mode(tmp_path: Path) -> None:
+    process_factory = RecordingProcessFactory(blocked=True)
+    manager = make_manager(tmp_path, process_factory)
+
+    job = manager.start(fixture_target(), quick_scan=False)
+
+    assert "--scan-mode" not in process_factory.argv
+    manager.stop(job.id)
+
+
 def test_start_exposes_truthful_phase_fields(tmp_path: Path) -> None:
     manager = make_manager(tmp_path, RecordingProcessFactory(blocked=True))
 

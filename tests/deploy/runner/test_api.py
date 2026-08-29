@@ -167,6 +167,26 @@ def test_create_get_cancel_and_report(api_parts) -> None:
         assert set(report) == {"summary", "markdown", "findings"}
 
 
+def test_create_accepts_full_scan_mode(api_parts) -> None:
+    config, manager = api_parts
+    with running_api(config, manager) as base_url:
+        status, created = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "website",
+                "target": "http://host.docker.internal:3001",
+                "quickScan": False,
+                "authorized": True,
+            },
+        )
+
+    assert status == 202
+    assert set(created) == {"id"}
+
+
 def test_report_markdown_download_requires_auth_and_has_safe_headers(api_parts) -> None:
     config, manager = api_parts
     with running_api(config, manager) as base_url:
