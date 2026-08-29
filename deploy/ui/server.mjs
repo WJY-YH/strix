@@ -55,6 +55,19 @@ function sendJson(response, status, payload, extraHeaders = {}) {
 }
 
 
+async function sendDownload(response, status, download) {
+  const body = Buffer.from(await download.body.arrayBuffer());
+  response.writeHead(status, {
+    "Cache-Control": "no-store",
+    "Content-Type": download.contentType || "text/markdown; charset=utf-8",
+    "Content-Disposition": download.contentDisposition || "attachment; filename=report.md",
+    "Content-Length": body.length,
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(body);
+}
+
+
 async function readJson(request) {
   const declared = Number(request.headers["content-length"] || 0);
   if (!Number.isSafeInteger(declared) || declared <= 0 || declared > MAX_BODY_BYTES) {
@@ -156,6 +169,10 @@ export function createUiServer({ accessToken, runnerClient, clientDir }) {
           sendJson(response, 200, await runnerClient.ready());
           return;
         }
+        if (pathname === "/api/scans" && request.method === "GET") {
+          sendJson(response, 200, await runnerClient.list());
+          return;
+        }
         if (pathname === "/api/scans" && request.method === "POST") {
           sendJson(response, 202, await runnerClient.start(await readJson(request)));
           return;
@@ -163,6 +180,15 @@ export function createUiServer({ accessToken, runnerClient, clientDir }) {
         const report = pathname.match(/^\/api\/scans\/([^/]+)\/report$/);
         if (report && request.method === "GET") {
           sendJson(response, 200, await runnerClient.report(decodeURIComponent(report[1])));
+          return;
+        }
+        const reportDownload = pathname.match(/^\/api\/scans\/([^/]+)\/report\/download$/);
+        if (reportDownload && request.method === "GET") {
+          await sendDownload(
+            response,
+            200,
+            await runnerClient.downloadReport(decodeURIComponent(reportDownload[1])),
+          );
           return;
         }
         const stop = pathname.match(/^\/api\/scans\/([^/]+)\/stop$/);

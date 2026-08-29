@@ -24,6 +24,7 @@ MAX_BODY_BYTES = 32 * 1024
 _SCAN_PATH = re.compile(r"/v1/scans/([^/]+)")
 _CANCEL_PATH = re.compile(r"/v1/scans/([^/]+)/cancel")
 _REPORT_PATH = re.compile(r"/v1/scans/([^/]+)/report")
+_REPORT_DOWNLOAD_PATH = re.compile(r"/v1/scans/([^/]+)/report/download")
 
 
 def _job_payload(job: ScanJob) -> dict[str, object]:
@@ -59,6 +60,24 @@ def create_server(
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_bytes(
+            self,
+            status: int,
+            body: bytes,
+            *,
+            content_type: str,
+            content_disposition: str | None = None,
+        ) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if content_disposition:
+                self.send_header("Content-Disposition", content_disposition)
             self.end_headers()
             self.wfile.write(body)
 
@@ -102,6 +121,26 @@ def create_server(
                 return
             if path == "/v1/scans":
                 self._send(200, {"scans": [_job_payload(job) for job in manager.list()]})
+                return
+            download_match = _REPORT_DOWNLOAD_PATH.fullmatch(path)
+            if download_match:
+                try:
+                    job = manager.get(download_match.group(1))
+                    report = manager.report(job.id)
+                except ScanNotFound:
+                    self._send(404, {"error": "not_found", "message": "未找到该扫描。"})
+                    return
+                markdown = str(report.get("markdown") or "")
+                if not markdown:
+                    self._send(409, {"error": "report_not_ready", "message": "扫描报告尚未生成。"})
+                    return
+                safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", job.id)
+                self._send_bytes(
+                    200,
+                    markdown.encode("utf-8"),
+                    content_type="text/markdown; charset=utf-8",
+                    content_disposition=f'attachment; filename="strix-report-{safe_id}.md"',
+                )
                 return
             scan_match = _SCAN_PATH.fullmatch(path)
             if scan_match:

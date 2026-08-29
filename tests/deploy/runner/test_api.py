@@ -52,6 +52,22 @@ def request_json(
         return response.status, json.loads(response.read())
 
 
+def request_raw(
+    base_url: str,
+    path: str,
+    *,
+    token: str | None = None,
+) -> tuple[int, dict[str, str], bytes]:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(f"{base_url}{path}", headers=headers)
+    try:
+        response = urllib.request.urlopen(request, timeout=2)  # noqa: S310
+    except urllib.error.HTTPError as error:
+        return error.code, dict(error.headers), error.read()
+    with response:
+        return response.status, dict(response.headers), response.read()
+
+
 @contextmanager
 def running_api(
     config: RunnerConfig,
@@ -148,6 +164,63 @@ def test_create_get_cancel_and_report(api_parts) -> None:
         )
         assert report_status == 200
         assert set(report) == {"summary", "markdown", "findings"}
+
+
+def test_report_markdown_download_requires_auth_and_has_safe_headers(api_parts) -> None:
+    config, manager = api_parts
+    with running_api(config, manager) as base_url:
+        created = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "website",
+                "target": "http://host.docker.internal:3001",
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        job_id = str(created[1]["id"])
+        job = manager.get(job_id)
+        run_dir = manager.runs_dir / job.run_name
+        run_dir.mkdir(parents=True)
+        (run_dir / "penetration_test_report.md").write_text("# Report\n", encoding="utf-8")
+
+        assert request_raw(base_url, f"/v1/scans/{job_id}/report/download")[0] == 401
+        status, headers, body = request_raw(
+            base_url,
+            f"/v1/scans/{job_id}/report/download",
+            token="runner-token",
+        )
+        assert status == 200
+        assert headers["Content-Type"].startswith("text/markdown")
+        assert headers["Content-Disposition"] == f'attachment; filename="strix-report-{job_id}.md"'
+        assert body == b"# Report\n"
+
+
+def test_report_markdown_download_rejects_missing_report(api_parts) -> None:
+    config, manager = api_parts
+    with running_api(config, manager) as base_url:
+        created = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "website",
+                "target": "http://host.docker.internal:3001",
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        status, _headers, body = request_raw(
+            base_url,
+            f"/v1/scans/{created[1]['id']}/report/download",
+            token="runner-token",
+        )
+    assert status == 409
+    assert b"report_not_ready" in body
 
 
 def test_list_scans_returns_newest_first_with_phase_fields(api_parts) -> None:

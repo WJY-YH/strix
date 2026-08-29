@@ -13,12 +13,21 @@ async function withServer(callback) {
   const calls = [];
   const runnerClient = {
     ready: async () => ({ ready: true }),
+    list: async () => (calls.push(["list"]), { scans: [] }),
     start: async (body) => (calls.push(["start", body]), { id: "scan-id" }),
     status: async (id) => (calls.push(["status", id]), { id, status: "running" }),
     stop: async (id) => (calls.push(["stop", id]), { id, status: "stopped" }),
     report: async (id) => (
       calls.push(["report", id]),
       { summary: "完成", markdown: "# 报告", findings: 0 }
+    ),
+    downloadReport: async (id) => (
+      calls.push(["downloadReport", id]),
+      {
+        body: new Response("# 报告\n"),
+        contentType: "text/markdown; charset=utf-8",
+        contentDisposition: 'attachment; filename="strix-report-scan-id.md"',
+      }
     ),
   };
   const server = createUiServer({
@@ -64,6 +73,7 @@ test("UI proxies the existing scan contract", async () => {
     });
 
     assert.equal((await request("/api/preflight")).status, 200);
+    assert.equal((await request("/api/scans")).status, 200);
     assert.equal((await request("/api/scans", {
       method: "POST",
       body: JSON.stringify({ type: "website", target: "fixture" }),
@@ -71,7 +81,20 @@ test("UI proxies the existing scan contract", async () => {
     assert.equal((await request("/api/scans/scan-id")).status, 200);
     assert.equal((await request("/api/scans/scan-id/stop", { method: "POST" })).status, 200);
     assert.equal((await request("/api/scans/scan-id/report")).status, 200);
-    assert.deepEqual(calls.map(([name]) => name), ["start", "status", "stop", "report"]);
+    const download = await request("/api/scans/scan-id/report/download");
+    assert.equal(download.status, 200);
+    assert.equal(await download.text(), "# 报告\n");
+    assert.equal(download.headers.get("content-type"), "text/markdown; charset=utf-8");
+    assert.match(download.headers.get("content-disposition"), /strix-report-scan-id\.md/);
+    assert.deepEqual(calls.map(([name]) => name), ["list", "start", "status", "stop", "report", "downloadReport"]);
+  });
+});
+
+
+test("UI protects markdown downloads with the same session", async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/scans/scan-id/report/download`);
+    assert.equal(response.status, 401);
   });
 });
 

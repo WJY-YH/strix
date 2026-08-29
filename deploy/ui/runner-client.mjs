@@ -12,7 +12,7 @@ export class RunnerClientError extends Error {
 export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
   const root = baseUrl.replace(/\/+$/, "");
 
-  async function request(path, { method = "GET", body } = {}) {
+  function requestOptions(method, body) {
     const options = {
       method,
       headers: { Authorization: `Bearer ${token}` },
@@ -22,6 +22,11 @@ export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
       options.headers["Content-Type"] = "application/json";
       options.body = JSON.stringify(body);
     }
+    return options;
+  }
+
+  async function request(path, { method = "GET", body } = {}) {
+    const options = requestOptions(method, body);
 
     let response;
     try {
@@ -56,12 +61,46 @@ export function createRunnerClient({ baseUrl, token, fetchImpl = fetch }) {
     return payload;
   }
 
+  async function requestBinary(path) {
+    let response;
+    try {
+      response = await fetchImpl(`${root}${path}`, requestOptions("GET"));
+    } catch {
+      throw new RunnerClientError(503, "runner_unavailable", "执行器暂不可用，请稍后重试。");
+    }
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        // Keep a safe generic error for non-JSON upstream failures.
+      }
+      const safePayload = payload && typeof payload === "object" ? payload : null;
+      throw new RunnerClientError(
+        response.status,
+        String(safePayload?.error || "runner_error"),
+        String(safePayload?.message || "执行器请求失败。"),
+        safePayload,
+      );
+    }
+    return {
+      body: new Response(await response.arrayBuffer(), {
+        headers: { "Content-Type": response.headers.get("content-type") || "application/octet-stream" },
+      }),
+      contentType: response.headers.get("content-type") || "application/octet-stream",
+      contentDisposition: response.headers.get("content-disposition") || "",
+      contentLength: response.headers.get("content-length") || "",
+    };
+  }
+
   const scanPath = (id) => `/v1/scans/${encodeURIComponent(id)}`;
   return {
     ready: () => request("/ready"),
     start: (body) => request("/v1/scans", { method: "POST", body }),
+    list: () => request("/v1/scans"),
     status: (id) => request(scanPath(id)),
     stop: (id) => request(`${scanPath(id)}/cancel`, { method: "POST" }),
     report: (id) => request(`${scanPath(id)}/report`),
+    downloadReport: (id) => requestBinary(`${scanPath(id)}/report/download`),
   };
 }
