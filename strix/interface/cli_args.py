@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -17,6 +18,18 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
+
+
+_RUN_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+
+def _run_name(value: str) -> str:
+    if not _RUN_NAME_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "must be 1-64 characters using only letters, numbers, '_' or '-', "
+            "and must start with a letter or number"
+        )
+    return value
 
 
 def get_version() -> str:
@@ -254,6 +267,12 @@ Examples:
             "and agent topology. Skips fresh run-name generation."
         ),
     )
+    parser.add_argument(
+        "--run-name",
+        type=_run_name,
+        metavar="RUN_NAME",
+        help="Stable name for a fresh run directory under ./strix_runs.",
+    )
 
     args = parser.parse_args()
     # Startup-resolved state lives alongside the parsed flags. The full schema
@@ -262,7 +281,6 @@ Examples:
     args.targets_info = []
     args.local_sources = []
     args.diff_scope = {"active": False}
-    args.run_name = None
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
@@ -297,6 +315,8 @@ Examples:
     args.user_instruction = args.instruction or None
 
     if args.resume:
+        if args.run_name:
+            parser.error("Cannot combine --resume with --run-name.")
         if args.target or args.target_list:
             parser.error(
                 "Cannot combine --resume with --target/--target-list. "
