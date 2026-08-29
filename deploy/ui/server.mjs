@@ -128,7 +128,9 @@ async function serveStatic(response, clientDir, pathname) {
     candidate = resolve(root, "index.html");
   }
   response.writeHead(200, {
-    "Cache-Control": candidate.endsWith("index.html") ? "no-cache" : "public, max-age=31536000, immutable",
+    "Cache-Control": candidate.endsWith("index.html") || candidate.endsWith("enhancements.js")
+      ? "no-cache"
+      : "public, max-age=31536000, immutable",
     "Content-Type": MIME_TYPES.get(extname(candidate)) || "application/octet-stream",
     "X-Content-Type-Options": "nosniff",
   });

@@ -41,5 +41,5 @@ test("ZIP scan requests become local-code scans without changing authorization",
 
 test("static page loads the history enhancement after the app bundle", async () => {
   const html = await readFile(new URL("../dist/client/index.html", import.meta.url), "utf8");
-  assert.match(html, /src="\/enhancements\.js"/);
+  assert.match(html, /src="\/enhancements\.js\?v=zip-upload-1"/);
 });
