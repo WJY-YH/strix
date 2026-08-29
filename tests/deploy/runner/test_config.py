@@ -14,6 +14,17 @@ def test_config_requires_runner_token(monkeypatch: pytest.MonkeyPatch, tmp_path)
         RunnerConfig.from_env()
 
 
+def test_config_rejects_placeholder_secret(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    monkeypatch.setenv("STRIX_RUNNER_TOKEN", "change-before-start")
+    monkeypatch.setenv("STRIX_LLM", "deepseek/deepseek-v4-pro")
+    monkeypatch.setenv("LLM_API_KEY", "model-key")
+    monkeypatch.setenv("STRIX_ALLOWED_TARGETS", "host.docker.internal:3001")
+    monkeypatch.setenv("STRIX_DATA_DIR", str(tmp_path))
+
+    with pytest.raises(ValueError, match="change-before-start"):
+        RunnerConfig.from_env()
+
+
 def test_config_loads_required_values_and_defaults(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,

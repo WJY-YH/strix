@@ -12,6 +12,8 @@ def _required(name: str) -> str:
     value = os.environ.get(name, "").strip()
     if not value:
         raise ValueError(f"{name} is required")
+    if value == "change-before-start":
+        raise ValueError(f"{name} cannot be change-before-start")
     return value
 
 
@@ -54,9 +56,13 @@ class RunnerConfig:
         if not budget.is_finite() or budget <= 0:
             raise ValueError("STRIX_MAX_BUDGET_USD must be greater than zero")
 
+        bind_host = os.environ.get("STRIX_RUNNER_BIND", "127.0.0.1").strip()
+        if not bind_host or bind_host == "change-before-start":
+            raise ValueError("STRIX_RUNNER_BIND must be a real private bind address")
+
         return cls(
             token=token,
-            bind_host=os.environ.get("STRIX_RUNNER_BIND", "127.0.0.1").strip(),
+            bind_host=bind_host,
             port=port,
             data_dir=Path(os.environ.get("STRIX_DATA_DIR", "/data")),
             strix_binary=os.environ.get("STRIX_BINARY", "strix").strip(),

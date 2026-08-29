@@ -1,0 +1,19 @@
+services:
+  runner:
+    image: ghcr.io/wjy-yh/strix-runner:${STRIX_IMAGE_TAG}
+    network_mode: host
+    group_add:
+      - "${DOCKER_GID}"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/strix/data:/data
+    env_file:
+      - /etc/strix/runner.env
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  test-target:
+    image: ghcr.io/wjy-yh/strix-test-target:${STRIX_IMAGE_TAG}
+    ports:
+      - 127.0.0.1:3001:3001
+    restart: unless-stopped
