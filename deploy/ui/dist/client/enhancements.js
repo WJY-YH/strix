@@ -287,6 +287,9 @@ function installBatchScan() {
   const addButton = panel.querySelector(".strix-batch-add");
   const startButton = panel.querySelector(".strix-batch-start");
   const cancelButton = panel.querySelector(".strix-batch-cancel");
+  button.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+  });
   let batchId = null;
   let timer = null;
 
