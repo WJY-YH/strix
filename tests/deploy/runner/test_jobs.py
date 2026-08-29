@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -142,3 +143,50 @@ def test_restart_marks_interrupted_job_failed(tmp_path: Path) -> None:
 
     assert second.get(job.id).status == "failed"
     first.stop(job.id)
+
+
+def test_phase_watcher_tracks_analysis_and_report_generation(tmp_path: Path) -> None:
+    manager = make_manager(tmp_path, RecordingProcessFactory(blocked=True))
+    job = manager.start(fixture_target())
+    run_dir = manager.runs_dir / job.run_name
+    run_dir.mkdir(parents=True)
+
+    (run_dir / "vulnerabilities.json").write_text("[]", encoding="utf-8")
+    deadline = time.monotonic() + 2
+    while manager.get(job.id).phase != "analyzing" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert manager.get(job.id).phase == "analyzing"
+    assert manager.get(job.id).phase_index == 3
+
+    (run_dir / "penetration_test_report.md").write_text("# Report", encoding="utf-8")
+    deadline = time.monotonic() + 2
+    while manager.get(job.id).phase != "reporting" and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert manager.get(job.id).phase == "reporting"
+    assert manager.get(job.id).phase_index == 4
+    manager.stop(job.id)
+
+
+def test_cleanup_expired_removes_only_terminal_jobs(tmp_path: Path) -> None:
+    manager = make_manager(tmp_path, RecordingProcessFactory(blocked=True))
+    old = manager.start(fixture_target())
+    manager.stop(old.id)
+    old_job = manager.get(old.id)
+    old_finished = (datetime.now(UTC) - timedelta(days=8)).isoformat()
+    old_job = old_job.__class__(**{**old_job.__dict__, "finished_at": old_finished})
+    manager._jobs[old.id] = old_job
+    manager._persist(old_job)
+    (manager.runs_dir / old_job.run_name).mkdir(parents=True)
+
+    recent = manager.start(fixture_target())
+    manager.stop(recent.id)
+    running = manager.start(fixture_target())
+
+    removed = manager.cleanup_expired(now=datetime.now(UTC))
+
+    assert removed == 1
+    with pytest.raises(KeyError):
+        manager.get(old.id)
+    assert manager.get(recent.id).status == "stopped"
+    assert manager.get(running.id).status == "running"
+    manager.stop(running.id)

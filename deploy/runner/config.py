@@ -28,6 +28,7 @@ class RunnerConfig:
     model_label: str
     max_budget_usd: Decimal
     allowed_targets: frozenset[str]
+    retention_days: int = 7
 
     @classmethod
     def from_env(cls) -> RunnerConfig:
@@ -56,6 +57,13 @@ class RunnerConfig:
         if not budget.is_finite() or budget <= 0:
             raise ValueError("STRIX_MAX_BUDGET_USD must be greater than zero")
 
+        try:
+            retention_days = int(os.environ.get("STRIX_REPORT_RETENTION_DAYS", "7"))
+        except ValueError as exc:
+            raise ValueError("STRIX_REPORT_RETENTION_DAYS must be a positive integer") from exc
+        if retention_days <= 0:
+            raise ValueError("STRIX_REPORT_RETENTION_DAYS must be a positive integer")
+
         bind_host = os.environ.get("STRIX_RUNNER_BIND", "127.0.0.1").strip()
         if not bind_host or bind_host == "change-before-start":
             raise ValueError("STRIX_RUNNER_BIND must be a real private bind address")
@@ -73,4 +81,5 @@ class RunnerConfig:
             model_label=model_label,
             max_budget_usd=budget,
             allowed_targets=allowed_targets,
+            retention_days=retention_days,
         )

@@ -8,10 +8,11 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from contextlib import suppress
 from dataclasses import asdict, dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from deploy.runner.reports import load_report
@@ -140,6 +141,7 @@ class ScanManager:
         self._stopping: set[str] = set()
         self._active_id: str | None = None
         self._load_jobs()
+        self.cleanup_expired()
 
     def start(self, target: AuthorizedTarget) -> ScanJob:
         self._ensure_storage_ready()
@@ -211,6 +213,7 @@ class ScanManager:
             self._jobs[job.id] = job
             self._persist(job)
             threading.Thread(target=self._watch, args=(job.id,), daemon=True).start()
+            threading.Thread(target=self._watch_progress, args=(job.id,), daemon=True).start()
             return job
 
     def list(self, limit: int = 100) -> list[ScanJob]:
@@ -255,6 +258,55 @@ class ScanManager:
     def report(self, job_id: str) -> dict[str, object]:
         job = self.get(job_id)
         return load_report(self.runs_dir / job.run_name)
+
+    def cleanup_expired(self, now: datetime | None = None) -> int:
+        current = now or datetime.now(UTC)
+        cutoff = current - timedelta(days=self.config.retention_days)
+        removed = 0
+        with self._lock:
+            expired = []
+            for job in self._jobs.values():
+                if job.status not in TERMINAL_STATUSES or not job.finished_at:
+                    continue
+                try:
+                    finished_at = datetime.fromisoformat(job.finished_at)
+                except ValueError:
+                    continue
+                if finished_at < cutoff:
+                    expired.append(job)
+            for job in expired:
+                self._jobs.pop(job.id, None)
+                with suppress(OSError):
+                    (self.state_dir / f"{job.id}.json").unlink()
+                with suppress(OSError):
+                    (self.state_dir / f"{job.id}.log").unlink()
+                with suppress(OSError):
+                    shutil.rmtree(self.runs_dir / job.run_name)
+                removed += 1
+        return removed
+
+    def _watch_progress(self, job_id: str) -> None:
+        run_dir = self.runs_dir / self._jobs[job_id].run_name
+        while True:
+            with self._lock:
+                job = self._jobs.get(job_id)
+                if job is None or job.status != "running":
+                    return
+                phase = job.phase
+            if phase == "scanning" and (run_dir / "vulnerabilities.json").is_file():
+                self._set_phase(job_id, "analyzing", 3, "正在分析检测结果")
+            if phase in {"scanning", "analyzing"} and (run_dir / "penetration_test_report.md").is_file():
+                self._set_phase(job_id, "reporting", 4, "正在生成修复建议")
+            time.sleep(0.5)
+
+    def _set_phase(self, job_id: str, phase: str, phase_index: int, message: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status != "running" or job.phase == phase:
+                return
+            updated = replace(job, phase=phase, phase_index=phase_index, message=message, updated_at=_now())
+            self._jobs[job_id] = updated
+            self._persist(updated)
 
     def _watch(self, job_id: str) -> None:
         process = self._processes[job_id]
