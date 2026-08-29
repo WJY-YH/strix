@@ -136,6 +136,7 @@ def test_create_get_cancel_and_report(api_parts) -> None:
         assert get_status == 200
         assert set(payload) == {
             "id",
+            "target",
             "status",
             "startedAt",
             "finishedAt",

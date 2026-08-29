@@ -30,6 +30,7 @@ _REPORT_DOWNLOAD_PATH = re.compile(r"/v1/scans/([^/]+)/report/download")
 def _job_payload(job: ScanJob) -> dict[str, object]:
     return {
         "id": job.id,
+        "target": job.target,
         "status": job.status,
         "startedAt": job.started_at,
         "finishedAt": job.finished_at,
