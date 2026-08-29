@@ -13,6 +13,10 @@ async function withServer(callback) {
   const calls = [];
   const runnerClient = {
     ready: async () => ({ ready: true }),
+    uploadZip: async (stream, metadata) => {
+      calls.push(["uploadZip", metadata, stream]);
+      return { uploadId: "upload-id", filename: metadata.filename, size: metadata.contentLength };
+    },
     list: async () => (calls.push(["list"]), { scans: [] }),
     start: async (body) => (calls.push(["start", body]), { id: "scan-id" }),
     status: async (id) => (calls.push(["status", id]), { id, status: "running" }),
@@ -95,6 +99,25 @@ test("UI protects markdown downloads with the same session", async () => {
   await withServer(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/scans/scan-id/report/download`);
     assert.equal(response.status, 401);
+  });
+});
+
+
+test("UI proxies authenticated ZIP uploads", async () => {
+  await withServer(async (baseUrl, calls) => {
+    const login = await fetch(`${baseUrl}/api/session`, {
+      method: "POST",
+      body: JSON.stringify({ token: "ui-access-token" }),
+    });
+    const cookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const response = await fetch(`${baseUrl}/api/uploads`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Content-Type": "application/zip", "X-Filename": "project.zip" },
+      body: new Uint8Array([1, 2, 3]),
+    });
+    assert.equal(response.status, 201);
+    assert.deepEqual(await response.json(), { uploadId: "upload-id", filename: "project.zip", size: 3 });
+    assert.equal(calls[0][0], "uploadZip");
   });
 });
 

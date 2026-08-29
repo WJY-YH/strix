@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import threading
 import urllib.error
 import urllib.request
+import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -66,6 +68,26 @@ def request_raw(
         return error.code, dict(error.headers), error.read()
     with response:
         return response.status, dict(response.headers), response.read()
+
+
+def request_upload(base_url: str, payload: bytes, *, token: str) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        f"{base_url}/v1/uploads",
+        data=payload,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/zip",
+            "Content-Length": str(len(payload)),
+            "X-Filename": "project.zip",
+        },
+        method="POST",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=2)  # noqa: S310
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+    with response:
+        return response.status, json.loads(response.read())
 
 
 @contextmanager
@@ -185,6 +207,33 @@ def test_create_accepts_full_scan_mode(api_parts) -> None:
 
     assert status == 202
     assert set(created) == {"id"}
+
+
+def test_upload_requires_auth_and_returns_upload_id(api_parts) -> None:
+    config, manager = api_parts
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("app.py", "print('ok')")
+    payload = stream.getvalue()
+    with running_api(config, manager) as base_url:
+        assert request_upload(base_url, b"not-a-zip", token="wrong")[0] == 401
+        status, response = request_upload(base_url, payload, token="runner-token")
+        scan_status, scan = request_json(
+            base_url,
+            "/v1/scans",
+            method="POST",
+            token="runner-token",
+            body={
+                "type": "local_code",
+                "target": response["uploadId"],
+                "quickScan": True,
+                "authorized": True,
+            },
+        )
+        manager.stop(str(scan["id"]))
+    assert status == 201
+    assert set(response) == {"uploadId", "filename", "size"}
+    assert scan_status == 202
 
 
 def test_report_markdown_download_requires_auth_and_has_safe_headers(api_parts) -> None:

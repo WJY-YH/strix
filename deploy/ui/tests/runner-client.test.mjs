@@ -73,6 +73,29 @@ test("runner client downloads markdown without parsing it as JSON", async () => 
 });
 
 
+test("runner client streams ZIP uploads with a filename and size", async () => {
+  const seen = [];
+  const client = createRunnerClient({
+    baseUrl: "https://runner.internal:8787",
+    token: "secret",
+    fetchImpl: async (url, options) => {
+      seen.push({ url, options });
+      return Response.json({ uploadId: "upload-id", filename: "project.zip", size: 4 });
+    },
+  });
+
+  const result = await client.uploadZip(new Uint8Array([1, 2, 3, 4]), {
+    filename: "project.zip",
+    contentLength: 4,
+  });
+
+  assert.deepEqual(result, { uploadId: "upload-id", filename: "project.zip", size: 4 });
+  assert.equal(seen[0].url, "https://runner.internal:8787/v1/uploads");
+  assert.equal(seen[0].options.headers["X-Filename"], "project.zip");
+  assert.equal(seen[0].options.headers["Content-Length"], "4");
+});
+
+
 test("runner client maps connection and non-json failures safely", async () => {
   const unavailable = createRunnerClient({
     baseUrl: "https://runner.internal:8787",

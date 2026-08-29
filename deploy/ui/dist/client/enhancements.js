@@ -40,6 +40,12 @@ export function formatScanProgress(scan, now = Date.now()) {
 }
 
 
+export function rewriteZipScanBody(body, uploadId) {
+  const payload = typeof body === "string" ? JSON.parse(body) : { ...body };
+  return JSON.stringify({ ...payload, type: "local_code", target: uploadId });
+}
+
+
 function statusLabel(scan) {
   if (scan.status === "findings") return "发现问题";
   if (scan.status === "complete") return "已完成";
@@ -125,7 +131,105 @@ async function refresh() {
 }
 
 
+function installZipUpload() {
+  if (window.__strixZipUploadInstalled) return;
+  const targetGroup = document.querySelector('[role="group"]');
+  const targetInput = document.querySelector('input[placeholder="https://你的站点.com"], input[placeholder*="你的账号"]');
+  if (!targetGroup || !targetInput) return;
+
+  const zipButton = document.createElement("button");
+  zipButton.type = "button";
+  zipButton.className = "strix-zip-button";
+  zipButton.textContent = "上传 ZIP 代码";
+  zipButton.setAttribute("aria-pressed", "false");
+  targetGroup.append(zipButton);
+
+  const panel = document.createElement("div");
+  panel.className = "strix-zip-panel";
+  panel.hidden = true;
+  panel.innerHTML = `
+    <label class="strix-zip-picker">
+      <span>选择本地 ZIP 文件</span>
+      <input type="file" accept=".zip,application/zip" aria-label="选择 ZIP 文件">
+    </label>
+    <small class="strix-zip-status">只上传源码压缩包，最大 100 MB。扫描结束后自动删除源码。</small>
+  `;
+  targetInput.closest("label")?.after(panel);
+  const fileInput = panel.querySelector('input[type="file"]');
+  const status = panel.querySelector(".strix-zip-status");
+  const state = { file: null, uploadId: null };
+
+  const setMode = (enabled) => {
+    window.__strixZipMode = enabled;
+    zipButton.setAttribute("aria-pressed", String(enabled));
+    panel.hidden = !enabled;
+    if (enabled) {
+      targetInput.value = "https://github.com/WJY-YH/strix";
+      targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+      targetInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  };
+  zipButton.addEventListener("click", () => setMode(!window.__strixZipMode));
+  document.addEventListener("click", (event) => {
+    const button = event.target.closest?.('[role="group"] button');
+    if (button && button !== zipButton) setMode(false);
+  });
+  fileInput.addEventListener("change", () => {
+    state.file = fileInput.files?.[0] || null;
+    state.uploadId = null;
+    if (!state.file) {
+      status.textContent = "只上传源码压缩包，最大 100 MB。扫描结束后自动删除源码。";
+      return;
+    }
+    status.textContent = `${state.file.name}（${Math.ceil(state.file.size / 1024 / 1024)} MB），开始体检时上传。`;
+  });
+
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : input?.url || "";
+    if (window.__strixZipMode && url.endsWith("/api/scans") && init.method === "POST" && !state.file) {
+      status.textContent = "请先选择 ZIP 文件。";
+      return new Response(JSON.stringify({ error: "upload_required", message: "请先选择 ZIP 文件。" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (window.__strixZipMode && state.file && url.endsWith("/api/scans") && init.method === "POST") {
+      if (!state.uploadId) {
+        status.textContent = "正在上传 ZIP…";
+        const upload = await originalFetch("/api/uploads", {
+          method: "POST",
+          headers: { "Content-Type": "application/zip", "X-Filename": state.file.name },
+          body: state.file,
+        });
+        if (!upload.ok) {
+          status.textContent = "ZIP 上传失败，请检查文件大小和格式。";
+          return upload;
+        }
+        const payload = await upload.json();
+        state.uploadId = payload.uploadId;
+        status.textContent = "ZIP 已上传，正在创建扫描…";
+      }
+      init = { ...init, body: rewriteZipScanBody(init.body, state.uploadId) };
+    }
+    return originalFetch(input, init);
+  };
+  window.__strixZipUploadInstalled = true;
+}
+
+
 if (typeof document !== "undefined") {
+  const zipStyle = document.createElement("style");
+  zipStyle.textContent = `
+    .strix-zip-button { border: 1px solid #cbd5e1; border-radius: 14px; padding: 12px 18px; background: #fff; color: #1d4ed8; cursor: pointer; font-weight: 600; }
+    .strix-zip-button[aria-pressed="true"] { border-color: #2563eb; background: #eff6ff; }
+    .strix-zip-panel { margin-top: 12px; border: 1px dashed #93c5fd; border-radius: 16px; padding: 14px; background: #eff6ff; }
+    .strix-zip-picker { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #1e3a8a; font-weight: 600; cursor: pointer; }
+    .strix-zip-picker input { max-width: 180px; }
+    .strix-zip-status { display: block; margin-top: 8px; color: #64748b; }
+  `;
+  document.head.append(zipStyle);
+  window.setInterval(installZipUpload, 300);
   document.addEventListener("click", async (event) => {
     const button = event.target.closest?.(".download-button");
     const reportId = window.__strixReportId;

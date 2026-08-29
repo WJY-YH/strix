@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from deploy.runner.reports import load_report
+from deploy.runner.uploads import UploadNotFound, UploadStore
 
 
 if TYPE_CHECKING:
@@ -133,6 +134,7 @@ class ScanManager:
         self.process_factory = process_factory
         self.state_dir = config.data_dir / "runner-state"
         self.runs_dir = config.data_dir / "strix_runs"
+        self.uploads = UploadStore(config.data_dir)
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -140,6 +142,7 @@ class ScanManager:
         self._processes: dict[str, ManagedProcess] = {}
         self._stopping: set[str] = set()
         self._active_id: str | None = None
+        self._upload_ids: dict[str, str] = {}
         self._load_jobs()
         self.cleanup_expired()
 
@@ -169,11 +172,36 @@ class ScanManager:
             self._active_id = job.id
             self._persist(job)
 
+            target_value = target.value
+            if target.kind == "local_code":
+                source_dir = self.runs_dir / run_name / "uploaded-source"
+                source_dir.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    self.uploads.prepare(target.value, source_dir)
+                except (UploadNotFound, OSError, ValueError) as exc:
+                    failed = replace(
+                        job,
+                        status="failed",
+                        phase="failed",
+                        phase_index=PHASE_TOTAL,
+                        message="本地代码准备失败",
+                        finished_at=_now(),
+                        error=self._redact(str(exc)),
+                        updated_at=_now(),
+                    )
+                    self._jobs[job.id] = failed
+                    self._active_id = None
+                    self._persist(failed)
+                    self.uploads.discard(target.value)
+                    return failed
+                self._upload_ids[job.id] = target.value
+                target_value = str(source_dir)
+
             argv = [
                 self.config.strix_binary,
                 "--non-interactive",
                 "--target",
-                target.value,
+                target_value,
                 "--max-budget",
                 format(self.config.max_budget_usd, "f"),
                 "--run-name",
@@ -201,6 +229,7 @@ class ScanManager:
                 self._jobs[job.id] = failed
                 self._active_id = None
                 self._persist(failed)
+                self._cleanup_upload(job.id)
                 return failed
             self._processes[job.id] = process
             job = replace(
@@ -353,6 +382,7 @@ class ScanManager:
             self._jobs[job_id] = finished
             self._active_id = None
             self._processes.pop(job_id, None)
+            self._cleanup_upload(job_id)
             self._persist(finished)
 
     def _finish_stopped(self, job_id: str, exit_code: int | None) -> ScanJob:
@@ -374,8 +404,16 @@ class ScanManager:
         self._active_id = None
         self._processes.pop(job_id, None)
         self._stopping.discard(job_id)
+        self._cleanup_upload(job_id)
         self._persist(stopped)
         return stopped
+
+    def _cleanup_upload(self, job_id: str) -> None:
+        upload_id = self._upload_ids.pop(job_id, None)
+        if upload_id is not None:
+            self.uploads.discard(upload_id)
+            with suppress(OSError):
+                shutil.rmtree(self.runs_dir / self._jobs[job_id].run_name / "uploaded-source")
 
     def _ensure_storage_ready(self) -> None:
         try:

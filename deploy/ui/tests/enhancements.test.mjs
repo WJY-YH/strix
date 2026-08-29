@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { formatScanProgress, safeReportFilename } from "../dist/client/enhancements.js";
+import { formatScanProgress, rewriteZipScanBody, safeReportFilename } from "../dist/client/enhancements.js";
 
 
 test("progress formatter uses server phase and truthful elapsed data", () => {
@@ -26,6 +26,16 @@ test("progress formatter uses server phase and truthful elapsed data", () => {
 
 test("report filenames cannot contain path separators", () => {
   assert.equal(safeReportFilename("scan/../../id"), "strix-report-scan-------id.md");
+});
+
+
+test("ZIP scan requests become local-code scans without changing authorization", () => {
+  assert.deepEqual(JSON.parse(rewriteZipScanBody({ quickScan: false, authorized: true }, "upload-id")), {
+    type: "local_code",
+    target: "upload-id",
+    quickScan: false,
+    authorized: true,
+  });
 });
 
 

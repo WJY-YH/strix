@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from deploy.runner.auth import bearer_is_valid
 from deploy.runner.jobs import ScanBusy, ScanNotFound, StorageNotReady
 from deploy.runner.targets import TargetRejected, validate_redirect_chain, validate_target
+from deploy.runner.uploads import UploadRejected
 
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 
 MAX_BODY_BYTES = 32 * 1024
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 _SCAN_PATH = re.compile(r"/v1/scans/([^/]+)")
 _CANCEL_PATH = re.compile(r"/v1/scans/([^/]+)/cancel")
 _REPORT_PATH = re.compile(r"/v1/scans/([^/]+)/report")
@@ -41,6 +43,21 @@ def _job_payload(job: ScanJob) -> dict[str, object]:
         "phaseTotal": job.phase_total,
         "updatedAt": job.updated_at,
     }
+
+
+class _LimitedReader:
+    def __init__(self, source, remaining: int) -> None:
+        self.source = source
+        self.remaining = remaining
+
+    def read(self, size: int = -1) -> bytes:
+        if self.remaining <= 0:
+            return b""
+        if size < 0:
+            size = self.remaining
+        chunk = self.source.read(min(size, self.remaining))
+        self.remaining -= len(chunk)
+        return chunk
 
 
 def create_server(
@@ -167,6 +184,9 @@ def create_server(
             path = urlsplit(self.path).path
             if not self._authorized():
                 return
+            if path == "/v1/uploads":
+                self._create_upload()
+                return
             if path == "/v1/scans":
                 self._create_scan()
                 return
@@ -180,6 +200,28 @@ def create_server(
                 self._send(200, _job_payload(job))
                 return
             self._send(404, {"error": "not_found", "message": "接口不存在。"})
+
+        def _create_upload(self) -> None:
+            try:
+                content_length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                self._send(400, {"error": "invalid_request", "message": "上传内容无效。"})
+                return
+            if content_length <= 0 or content_length > MAX_UPLOAD_BYTES:
+                self._send(413, {"error": "request_too_large", "message": "ZIP 文件过大。"})
+                return
+            filename = self.headers.get("X-Filename", "upload.zip")
+            try:
+                record = manager.uploads.save(
+                    _LimitedReader(self.rfile, content_length), content_length, filename
+                )
+            except UploadRejected as exc:
+                self._send(400, {"error": "upload_rejected", "message": str(exc)})
+                return
+            self._send(
+                201,
+                {"uploadId": record.upload_id, "filename": record.filename, "size": record.size},
+            )
 
         def _create_scan(self) -> None:  # noqa: PLR0911
             payload = self._read_json()

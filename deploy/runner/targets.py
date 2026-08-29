@@ -5,6 +5,7 @@ from __future__ import annotations
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -15,7 +16,7 @@ class TargetRejected(ValueError):  # noqa: N818
 
 @dataclass(frozen=True)
 class AuthorizedTarget:
-    kind: Literal["website", "repository"]
+    kind: Literal["website", "repository", "local_code"]
     value: str
     authority_key: str
 
@@ -46,6 +47,15 @@ def validate_target(
     raw_target: object,
     allowed: frozenset[str],
 ) -> AuthorizedTarget:
+    if target_type == "local_code":
+        if not isinstance(raw_target, str):
+            raise TargetRejected("Local code upload is invalid")
+        try:
+            parsed_id = uuid.UUID(raw_target)
+        except (ValueError, AttributeError) as exc:
+            raise TargetRejected("Local code upload is invalid") from exc
+        return AuthorizedTarget("local_code", str(parsed_id), str(parsed_id))
+
     raw, parsed = _parse_url(raw_target)
     hostname = (parsed.hostname or "").lower()
 

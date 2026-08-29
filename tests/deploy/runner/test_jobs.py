@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import subprocess
 import threading
 import time
+import zipfile
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -101,6 +103,24 @@ def test_start_without_quick_scan_uses_strix_default_mode(tmp_path: Path) -> Non
 
     assert "--scan-mode" not in process_factory.argv
     manager.stop(job.id)
+
+
+def test_local_code_scan_extracts_and_cleans_upload(tmp_path: Path) -> None:
+    process_factory = RecordingProcessFactory(blocked=True)
+    manager = make_manager(tmp_path, process_factory)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("app.py", "print('ok')")
+    payload = stream.getvalue()
+    record = manager.uploads.save(io.BytesIO(payload), len(payload), "project.zip")
+    target = AuthorizedTarget("local_code", record.upload_id, record.upload_id)
+
+    job = manager.start(target)
+
+    assert str(manager.runs_dir / job.run_name / "uploaded-source") in process_factory.argv
+    manager.stop(job.id)
+    assert not record.path.exists()
+    assert not (manager.runs_dir / job.run_name / "uploaded-source").exists()
 
 
 def test_start_exposes_truthful_phase_fields(tmp_path: Path) -> None:
