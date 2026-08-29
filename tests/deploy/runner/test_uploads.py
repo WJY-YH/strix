@@ -8,6 +8,7 @@ import pytest
 
 from deploy.runner.uploads import UploadRejected, UploadStore
 
+
 if TYPE_CHECKING:
     from pathlib import Path
 

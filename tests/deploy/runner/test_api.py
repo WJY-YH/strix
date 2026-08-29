@@ -71,7 +71,7 @@ def request_raw(
 
 
 def request_upload(base_url: str, payload: bytes, *, token: str) -> tuple[int, dict[str, object]]:
-    request = urllib.request.Request(
+    request = urllib.request.Request(  # noqa: S310
         f"{base_url}/v1/uploads",
         data=payload,
         headers={
