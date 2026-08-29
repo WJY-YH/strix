@@ -39,6 +39,10 @@ test("runner client uses the fixed API paths", async () => {
   await client.stop("scan/id");
   await client.report("scan/id");
   await client.downloadReport("scan/id");
+  await client.createBatch({ items: [], quickScan: true, authorized: true });
+  await client.listBatches();
+  await client.batchStatus("batch/id");
+  await client.cancelBatch("batch/id");
 
   assert.deepEqual(seen, [
     ["https://runner.internal:8787/v1/scans", "POST"],
@@ -47,6 +51,10 @@ test("runner client uses the fixed API paths", async () => {
     ["https://runner.internal:8787/v1/scans/scan%2Fid/cancel", "POST"],
     ["https://runner.internal:8787/v1/scans/scan%2Fid/report", "GET"],
     ["https://runner.internal:8787/v1/scans/scan%2Fid/report/download", "GET"],
+    ["https://runner.internal:8787/v1/batches", "POST"],
+    ["https://runner.internal:8787/v1/batches", "GET"],
+    ["https://runner.internal:8787/v1/batches/batch%2Fid", "GET"],
+    ["https://runner.internal:8787/v1/batches/batch%2Fid/cancel", "POST"],
   ]);
 });
 

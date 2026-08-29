@@ -197,6 +197,24 @@ export function createUiServer({ accessToken, runnerClient, clientDir }) {
           sendJson(response, 202, await runnerClient.start(await readJson(request)));
           return;
         }
+        if (pathname === "/api/batches" && request.method === "GET") {
+          sendJson(response, 200, await runnerClient.listBatches());
+          return;
+        }
+        if (pathname === "/api/batches" && request.method === "POST") {
+          sendJson(response, 202, await runnerClient.createBatch(await readJson(request)));
+          return;
+        }
+        const batchCancel = pathname.match(/^\/api\/batches\/([^/]+)\/cancel$/);
+        if (batchCancel && request.method === "POST") {
+          sendJson(response, 200, await runnerClient.cancelBatch(decodeURIComponent(batchCancel[1])));
+          return;
+        }
+        const batchStatus = pathname.match(/^\/api\/batches\/([^/]+)$/);
+        if (batchStatus && request.method === "GET") {
+          sendJson(response, 200, await runnerClient.batchStatus(decodeURIComponent(batchStatus[1])));
+          return;
+        }
         const report = pathname.match(/^\/api\/scans\/([^/]+)\/report$/);
         if (report && request.method === "GET") {
           sendJson(response, 200, await runnerClient.report(decodeURIComponent(report[1])));
