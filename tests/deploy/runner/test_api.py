@@ -59,7 +59,7 @@ def request_raw(
     token: str | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    request = urllib.request.Request(f"{base_url}{path}", headers=headers)
+    request = urllib.request.Request(f"{base_url}{path}", headers=headers)  # noqa: S310
     try:
         response = urllib.request.urlopen(request, timeout=2)  # noqa: S310
     except urllib.error.HTTPError as error:

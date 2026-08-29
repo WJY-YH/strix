@@ -295,7 +295,8 @@ class ScanManager:
                 phase = job.phase
             if phase == "scanning" and (run_dir / "vulnerabilities.json").is_file():
                 self._set_phase(job_id, "analyzing", 3, "正在分析检测结果")
-            if phase in {"scanning", "analyzing"} and (run_dir / "penetration_test_report.md").is_file():
+            report_path = run_dir / "penetration_test_report.md"
+            if phase in {"scanning", "analyzing"} and report_path.is_file():
                 self._set_phase(job_id, "reporting", 4, "正在生成修复建议")
             time.sleep(0.5)
 
@@ -304,7 +305,13 @@ class ScanManager:
             job = self._jobs.get(job_id)
             if job is None or job.status != "running" or job.phase == phase:
                 return
-            updated = replace(job, phase=phase, phase_index=phase_index, message=message, updated_at=_now())
+            updated = replace(
+                job,
+                phase=phase,
+                phase_index=phase_index,
+                message=message,
+                updated_at=_now(),
+            )
             self._jobs[job_id] = updated
             self._persist(updated)
 
@@ -392,10 +399,16 @@ class ScanManager:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 payload.setdefault("phase", payload.get("status", "preparing"))
-                payload.setdefault("phase_index", PHASE_TOTAL if payload.get("status") in TERMINAL_STATUSES else 1)
+                payload.setdefault(
+                    "phase_index",
+                    PHASE_TOTAL if payload.get("status") in TERMINAL_STATUSES else 1,
+                )
                 payload.setdefault("phase_total", PHASE_TOTAL)
                 payload.setdefault("message", "扫描状态已恢复")
-                payload.setdefault("updated_at", payload.get("finished_at") or payload.get("started_at") or _now())
+                payload.setdefault(
+                    "updated_at",
+                    payload.get("finished_at") or payload.get("started_at") or _now(),
+                )
                 job = ScanJob(**payload)
             except (OSError, TypeError, ValueError, json.JSONDecodeError):
                 continue
@@ -405,7 +418,7 @@ class ScanManager:
                     status="failed",
                     phase="failed",
                     phase_index=PHASE_TOTAL,
-                    message="Runner 重启，扫描未完成",
+                    message="Runner 重启，扫描未完成",  # noqa: RUF001
                     finished_at=_now(),
                     error="Runner restarted before the scan finished.",
                     updated_at=_now(),
