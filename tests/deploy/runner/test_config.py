@@ -43,6 +43,22 @@ def test_config_loads_required_values_and_defaults(
     assert config.max_budget_usd == Decimal("5")
     assert config.allowed_targets == frozenset({"host.docker.internal:3001"})
     assert config.retention_days == 7
+    assert config.docker_data_dir == tmp_path
+
+
+def test_config_loads_docker_visible_data_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    docker_data_dir = tmp_path / "docker-volume"
+    monkeypatch.setenv("STRIX_RUNNER_TOKEN", "runner-token")
+    monkeypatch.setenv("STRIX_LLM", "deepseek/deepseek-v4-pro")
+    monkeypatch.setenv("LLM_API_KEY", "model-key")
+    monkeypatch.setenv("STRIX_ALLOWED_TARGETS", "host.docker.internal:3001")
+    monkeypatch.setenv("STRIX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("STRIX_DOCKER_DATA_DIR", str(docker_data_dir))
+
+    assert RunnerConfig.from_env().docker_data_dir == docker_data_dir
 
 
 def test_config_accepts_positive_report_retention_days(
