@@ -118,3 +118,23 @@ def test_resolver_does_not_guess_between_differently_priced_providers() -> None:
     finally:
         litellm.model_cost = original
         resolve_litellm_model.cache_clear()
+
+
+def test_resolver_prefers_unique_direct_provider_over_resellers() -> None:
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "vendor/example": {
+            "input_cost_per_token": 1.0,
+            "output_cost_per_token": 2.0,
+        },
+        "reseller/vendor/example": {
+            "input_cost_per_token": 3.0,
+            "output_cost_per_token": 4.0,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("example") == "vendor/example"
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()

@@ -10,7 +10,7 @@ from typing import Any, cast
 def resolve_litellm_model(model: str) -> str | None:
     """Return a provider-qualified model name that LiteLLM can price."""
     try:
-        import litellm
+        import litellm  # noqa: PLC0415
 
         normalized = model.strip()
         for prefix in ("litellm/", "any-llm/", "openai/"):
@@ -39,6 +39,9 @@ def resolve_litellm_model(model: str) -> str | None:
             matches = sorted(key for key in model_cost if key.endswith(f"/{name}"))
             if not matches:
                 continue
+            direct_matches = [key for key in matches if key.count("/") == 1]
+            if len(direct_matches) == 1:
+                matches = direct_matches
             prices = {
                 (
                     model_cost[key].get("input_cost_per_token"),
