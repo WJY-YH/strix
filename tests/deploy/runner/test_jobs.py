@@ -5,18 +5,15 @@ import subprocess
 import threading
 import time
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from deploy.runner.jobs import ScanBusy, ScanManager
 from deploy.runner.targets import AuthorizedTarget
 from tests.deploy.runner.helpers import make_config
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class FakeProcess:
@@ -121,6 +118,27 @@ def test_local_code_scan_extracts_and_cleans_upload(tmp_path: Path) -> None:
     manager.stop(job.id)
     assert not record.path.exists()
     assert not (manager.runs_dir / job.run_name / "uploaded-source").exists()
+
+
+def test_local_code_scan_uses_docker_visible_data_path(tmp_path: Path) -> None:
+    process_factory = RecordingProcessFactory(blocked=True)
+    config = replace(
+        make_config(tmp_path),
+        docker_data_dir=Path("/var/lib/docker/volumes/strix-data/_data"),
+    )
+    manager = ScanManager(config, process_factory=process_factory)
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("app.py", "print('ok')")
+    payload = stream.getvalue()
+    record = manager.uploads.save(io.BytesIO(payload), len(payload), "project.zip")
+
+    job = manager.start(AuthorizedTarget("local_code", record.upload_id, record.upload_id))
+
+    assert process_factory.argv[3].startswith(
+        "/var/lib/docker/volumes/strix-data/_data/strix_runs/"
+    )
+    manager.stop(job.id)
 
 
 def test_start_exposes_truthful_phase_fields(tmp_path: Path) -> None:

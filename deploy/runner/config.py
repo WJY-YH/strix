@@ -29,6 +29,9 @@ class RunnerConfig:
     max_budget_usd: Decimal
     allowed_targets: frozenset[str]
     retention_days: int = 7
+    # Path to the same persistent data volume as seen by the Docker daemon.
+    # In a containerized runner this can differ from ``data_dir``.
+    docker_data_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> RunnerConfig:
@@ -68,11 +71,16 @@ class RunnerConfig:
         if not bind_host or bind_host == "change-before-start":
             raise ValueError("STRIX_RUNNER_BIND must be a real private bind address")
 
+        data_dir = Path(os.environ.get("STRIX_DATA_DIR", "/data"))
+        docker_data_dir = Path(
+            os.environ.get("STRIX_DOCKER_DATA_DIR", str(data_dir))
+        )
+
         return cls(
             token=token,
             bind_host=bind_host,
             port=port,
-            data_dir=Path(os.environ.get("STRIX_DATA_DIR", "/data")),
+            data_dir=data_dir,
             strix_binary=os.environ.get("STRIX_BINARY", "strix").strip(),
             sandbox_image=os.environ.get(
                 "STRIX_SANDBOX_IMAGE",
@@ -82,4 +90,5 @@ class RunnerConfig:
             max_budget_usd=budget,
             allowed_targets=allowed_targets,
             retention_days=retention_days,
+            docker_data_dir=docker_data_dir,
         )
